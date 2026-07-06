@@ -21,3 +21,8 @@ desktop.ini
 # Configuration and Secrets
 .env
 .env.local
+backup/
+Output/
+output/
+Input/
+input/
