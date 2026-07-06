@@ -1,0 +1,23 @@
+# Byte-compiled / optimized / DLL info
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Environments and Virtual Envs
+.venv/
+venv/
+ENV/
+env/
+
+# Project specific outputs (Keep folder structure but ignore content)
+output/*
+!output/.gitkeep
+
+# Operating System Files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Configuration and Secrets
+.env
+.env.local
