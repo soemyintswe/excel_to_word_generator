@@ -5,7 +5,7 @@ from docx import Document
 from docx.shared import Pt
 from docx.enum.text import WD_LINE_SPACING
 from docx.oxml.ns import qn
-from docxcompose.composer import Composer # <-- အသစ်ထည့်ထားသော Library
+from docxcompose.composer import Composer
 import os
 import math
 import glob
@@ -50,6 +50,9 @@ class App:
         style.theme_use('clam')
         
         self.mapping_rules = {} 
+        self.template_path = None
+        self.excel_path = None
+        self.selected_sheet = None
 
         # --- Action Bar ---
         action_frame = tk.Frame(root)
@@ -103,7 +106,6 @@ class App:
         parent.columnconfigure(col, weight=1)
         lb = tk.Listbox(frame, height=10, borderwidth=1, relief="solid", font=('Arial', 10))
         lb.pack(fill=tk.BOTH, expand=True)
-        # Double click event to move
         lb.bind('<Double-Button-1>', self.move_double_click)
         return lb
 
@@ -112,7 +114,6 @@ class App:
         selection = lb.curselection()
         if not selection: return
         
-        item = lb.get(selection[0])
         if lb == self.word_all: self.move_item(self.word_all, self.word_sel)
         elif lb == self.word_sel: self.move_item(self.word_sel, self.word_all)
         elif lb == self.excel_all: self.move_item(self.excel_all, self.excel_sel)
@@ -163,88 +164,49 @@ class App:
     def load_template(self):
         path = filedialog.askopenfilename(filetypes=[("Word files", "*.docx")])
         if path:
-            self.template_path = path
-            doc = Document(path)
-            self.word_all.delete(0, tk.END)
-            self.word_sel.delete(0, tk.END)
-            if doc.tables:
-                for cell in doc.tables[0].rows[0].cells: self.word_all.insert(tk.END, cell.text.strip())
-            self.lbl_word.config(text=f"Word: {os.path.basename(path)}", foreground="green")
+            try:
+                self.template_path = path
+                doc = Document(path)
+                self.word_all.delete(0, tk.END)
+                self.word_sel.delete(0, tk.END)
+                if doc.tables:
+                    for cell in doc.tables[0].rows[0].cells: self.word_all.insert(tk.END, cell.text.strip())
+                self.lbl_word.config(text=f"Word: {os.path.basename(path)}", foreground="green")
+            except Exception as e: messagebox.showerror("Error", f"Template error: {e}")
 
-    def open_folder(self):
-        if not os.path.exists('output'): os.makedirs('output')
-        os.startfile('output')
-
-    def reset_app(self):
-        self.mapping_rules.clear()
-        self.list_rules.delete(0, tk.END)
-        for lb in [self.word_all, self.word_sel, self.excel_all, self.excel_sel]: lb.delete(0, tk.END)
-
+    # --- 🛠️ ပြင်ဆင်ပြီး စိတ်ချရသော REPORT GENERATION LOGIC 🛠️ ---
     def generate_report(self):
-        if not hasattr(self, 'template_path') or not hasattr(self, 'excel_path'):
-            messagebox.showerror("Error", "ဖိုင်များ ရွေးပေးပါ။")
+        if not self.template_path or not self.excel_path:
+            messagebox.showwarning("Warning", "Word Template နှင့် Excel Data ဖိုင်များကို အရင် Load လုပ်ပေးပါ။")
             return
-        
-        # Cleanup output folder
-        if os.path.exists('output'):
-            for f in glob.glob("output/*.docx"):
-                try: os.remove(f)
-                except: pass
-        else: os.makedirs('output')
+        if not self.mapping_rules:
+            messagebox.showwarning("Warning", "Mapping Rules များ အနည်းဆုံးတစ်ခု သတ်မှတ်ပေးပါ။")
+            return
+
+        # Output Folder ဆောက်ခြင်း
+        output_dir = os.path.join(os.getcwd(), "output")
+        if not os.path.exists(output_dir):
+            os.makedirs(output_dir)
+
+        output_path = os.path.join(output_dir, "QR Print.docx")
+
+        # ဖိုင်ဖွင့်ထားဆဲ ဖြစ်နေပါက Error အရင်ပြရန်
+        if os.path.exists(output_path):
+            try:
+                # ဖိုင်ကို တခြားသူ ဖွင့်ထားလား စမ်းသပ်ကြည့်ခြင်း
+                f = open(output_path, "a")
+                f.close()
+            except IOError:
+                messagebox.showerror("Error", "ထွက်ပေါ်မည့် 'QR Print.docx' ဖိုင်အား Word တွင် ဖွင့်ထားဆဲ ဖြစ်နေပါသည်။\nကျေးဇူးပြု၍ ထို Word ဖိုင်ကို အရင်ပိတ်ပေးပြီးမှ ခလုတ်ကို ထပ်နှိပ်ပါ။")
+                return
 
         try:
             df = pd.read_excel(self.excel_path, sheet_name=self.selected_sheet)
-            table_template = Document(self.template_path).tables[0]
-            max_rows = len(table_template.rows) - 1
             
-            generated_files = [] # ယာယီဖိုင်များ မှတ်သားထားရန်
+            # ပထမဆုံး စာမျက်နှာအတွက် Master Template ဖန်တီးခြင်း
+            master_doc = Document(self.template_path)
+            composer = Composer(master_doc)
             
-            # Step 1: စာမျက်နှာအလိုက် ဖိုင်များ ယာယီတည်ဆောက်ခြင်း
-            for batch_idx in range(math.ceil(len(df) / max_rows)):
-                doc = Document(self.template_path)
-                table = doc.tables[0]
-                batch_df = df.iloc[batch_idx * max_rows : (batch_idx + 1) * max_rows]
-                
-                for i, (_, row) in enumerate(batch_df.iterrows()):
-                    for col_idx, cell in enumerate(table.rows[0].cells):
-                        header = cell.text.strip()
-                        if header in self.mapping_rules:
-                            vals = [str(row[c]) for c in self.mapping_rules[header] if pd.notna(row[c])]
-                            p = table.rows[i+1].cells[col_idx].paragraphs[0]
-                            p.text = "" 
-                            run = p.add_run(" ".join(vals))
-                            run.font.name = "Pyidaungsu Numbers"
-                            run._element.rPr.rFonts.set(qn('w:eastAsia'), 'Pyidaungsu Numbers')
-                            run._element.rPr.rFonts.set(qn('w:cs'), 'Pyidaungsu Numbers')
-                            p.paragraph_format.space_before = Pt(0)
-                            p.paragraph_format.space_after = Pt(0)
-                            p.paragraph_format.line_spacing_rule = WD_LINE_SPACING.SINGLE
-                
-                temp_filename = f"output/temp_page_{batch_idx + 1}.docx"
-                doc.save(temp_filename)
-                generated_files.append(temp_filename)
-            
-            # Step 2: ယာယီဖိုင်များအားလုံးကို ဖိုင်တစ်ခုတည်းအဖြစ် ပေါင်းစည်းခြင်း
-            if generated_files:
-                master_doc = Document(generated_files[0])
-                composer = Composer(master_doc)
-                
-                for file_path in generated_files[1:]:
-                    master_doc.add_page_break() # စာမျက်နှာအသစ်သို့ ကူးရန် Page Break ထည့်ခြင်း
-                    sub_doc = Document(file_path)
-                    composer.append(sub_doc)
-                
-                final_output = "output/Final_Combined_Report.docx"
-                composer.save(final_output)
-                
-                # Step 3: ပေါင်းစည်းပြီးနောက် ယာယီဖိုင်များကို ပြန်ဖျက်ခြင်း
-                for file_path in generated_files:
-                    try: os.remove(file_path)
-                    except: pass
-
-            messagebox.showinfo("Success", "ဖိုင်များ အောင်မြင်စွာ ထွက်ရှိပြီး 'Final_Combined_Report.docx' အမည်ဖြင့် ဖိုင်တစ်ခုတည်းအဖြစ် ပေါင်းစည်းပေးလိုက်ပါပြီ။")
-        except Exception as e: messagebox.showerror("Error", str(e))
-
-root = tk.Tk()
-app = App(root)
-root.mainloop()
+            # ဒေတာတစ်ခုချင်းစီကို ကွင်းဆက်မပြတ်ဘဲ စိတ်ချရစွာ လုပ်ဆောင်ရန် Loop ပတ်ခြင်း
+            for index, row in df.iterrows():
+                # ကူးယူရန် ယာယီ Template တစ်ခုချင်းစီကို ခေါ်ယူခြင်း
